@@ -1,4 +1,8 @@
 #define _BSD_SOURCE
+#define BATT_NOW    "/sys/class/power_supply/BAT0/charge_now"
+#define BATT_FULL    "/sys/class/power_supply/BAT0/charge_full"
+#define BATT_STATUS    "/sys/class/power_supply/BAT0/status"
+
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,10 +15,6 @@
 #include <sys/wait.h>
 
 #include <X11/Xlib.h>
-
-char *tzargentina = "America/Buenos_Aires";
-char *tzutc = "UTC";
-char *tzberlin = "Europe/Berlin";
 
 static Display *dpy;
 
@@ -56,7 +56,10 @@ mktimes(char *fmt, char *tzname)
 	struct tm *timtm;
 
 	memset(buf, 0, sizeof(buf));
-	settz(tzname);
+    
+    if (tzname != NULL) {
+        settz(tzname);
+    }
 	tim = time(NULL);
 	timtm = localtime(&tim);
 	if (timtm == NULL) {
@@ -72,6 +75,44 @@ mktimes(char *fmt, char *tzname)
 	return smprintf("%s", buf);
 }
 
+char *
+getbattery()
+{
+    long lnum1, lnum2,percent = 0;
+    char *status = malloc(sizeof(char)*8);
+    const char *color;
+    char s = '?';
+    FILE *fp = NULL;
+    if ((fp = fopen(BATT_NOW, "r"))) {
+        fscanf(fp, "%ld\n", &lnum1);
+        fclose(fp);
+        fp = fopen(BATT_FULL, "r");
+        fscanf(fp, "%ld\n", &lnum2);
+        fclose(fp);
+        fp = fopen(BATT_STATUS, "r");
+        fscanf(fp, "%s\n", status);
+        fclose(fp);
+
+        percent = (lnum1/(lnum2/100));
+
+        if (percent <= 20)
+            color = "#ff0000";
+        else
+            color = "#00ff00";
+
+
+        if (strcmp(status,"Charging") == 0)
+            s = '+';
+        if (strcmp(status,"Discharging") == 0)
+            s = '-';
+        if (strcmp(status,"Full") == 0)
+            s = '=';
+        free(status);
+        return smprintf("<span color=\"%s\">%c%ld%%</span>", color, s, percent);
+    }
+    else return smprintf("");
+}
+
 void
 setstatus(char *str)
 {
@@ -79,46 +120,27 @@ setstatus(char *str)
 	XSync(dpy, False);
 }
 
-char *
-loadavg(void)
-{
-	double avgs[3];
-
-	if (getloadavg(avgs, 3) < 0) {
-		perror("getloadavg");
-		exit(1);
-	}
-
-	return smprintf("%.2f %.2f %.2f", avgs[0], avgs[1], avgs[2]);
-}
-
 int
 main(void)
 {
 	char *status;
-	char *avgs;
-	char *tmar;
-	char *tmutc;
-	char *tmbln;
+	char *timeinfo;
+    char *battery;
 
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fprintf(stderr, "dwmstatus: cannot open display.\n");
 		return 1;
 	}
 
-	for (;;sleep(90)) {
-		avgs = loadavg();
-		tmar = mktimes("%H:%M", tzargentina);
-		tmutc = mktimes("%H:%M", tzutc);
-		tmbln = mktimes("KW %W %a %d %b %H:%M %Z %Y", tzberlin);
+	for (;;sleep(30)) {
+		timeinfo = mktimes("%a %d %b %H:%M %Z %Y", NULL);
+        battery = getbattery();
 
-		status = smprintf("L:%s A:%s U:%s %s",
-				avgs, tmar, tmutc, tmbln);
+		status = smprintf("%s / %s",
+				 battery, timeinfo);
 		setstatus(status);
-		free(avgs);
-		free(tmar);
-		free(tmutc);
-		free(tmbln);
+        free(battery);
+        free(timeinfo);
 		free(status);
 	}
 
